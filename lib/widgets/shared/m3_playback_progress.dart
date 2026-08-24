@@ -44,8 +44,10 @@ class M3WavyLinearProgress extends StatefulWidget {
 }
 
 class _M3WavyLinearProgressState extends State<M3WavyLinearProgress>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _phaseCtrl;
+  late final AnimationController _valueCtrl;
+  late Animation<double> _valueAnim;
 
   @override
   void initState() {
@@ -54,15 +56,39 @@ class _M3WavyLinearProgressState extends State<M3WavyLinearProgress>
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     );
+    _valueCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+
+    final initialVal = widget.value ?? 0.0;
+    _valueAnim = AlwaysStoppedAnimation(initialVal);
+
     _syncAnimation();
   }
 
   @override
   void didUpdateWidget(M3WavyLinearProgress oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.playing != widget.playing ||
-        oldWidget.value != widget.value) {
+    if (oldWidget.playing != widget.playing) {
       _syncAnimation();
+    }
+
+    if (widget.value != oldWidget.value && widget.value != null) {
+      final begin = _valueAnim.value;
+      final end = widget.value!.clamp(0.0, 1.0);
+
+      final isSeek = (end - begin).abs() > 0.05;
+
+      if (isSeek) {
+        _valueAnim = AlwaysStoppedAnimation(end);
+        _valueCtrl.value = 1.0;
+      } else {
+        _valueAnim = Tween<double>(begin: begin, end: end).animate(
+          CurvedAnimation(parent: _valueCtrl, curve: Curves.linear),
+        );
+        _valueCtrl.forward(from: 0.0);
+      }
     }
   }
 
@@ -78,6 +104,7 @@ class _M3WavyLinearProgressState extends State<M3WavyLinearProgress>
   @override
   void dispose() {
     _phaseCtrl.dispose();
+    _valueCtrl.dispose();
     super.dispose();
   }
 
@@ -93,11 +120,11 @@ class _M3WavyLinearProgressState extends State<M3WavyLinearProgress>
         cs.surfaceContainerHighest;
 
     return AnimatedBuilder(
-      animation: _phaseCtrl,
+      animation: Listenable.merge([_phaseCtrl, _valueCtrl]),
       builder: (context, _) {
         return CustomPaint(
           painter: _WavyProgressPainter(
-            value: widget.value,
+            value: widget.value == null ? null : _valueAnim.value,
             phase: _phaseCtrl.value * math.pi * 2,
             playing: widget.playing,
             activeColor: active,
@@ -153,7 +180,7 @@ class _WavyProgressPainter extends CustomPainter {
 
   Path _wavePath(double width, double height) {
     final path = Path();
-    const step = 2.0;
+    const step = 1.0;
     path.moveTo(0, _waveY(0, height));
     for (var x = step; x <= width; x += step) {
       path.lineTo(x, _waveY(x, height));
@@ -174,6 +201,8 @@ class _WavyProgressPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.saveLayer(Offset.zero & size, Paint());
+
     final clipRRect = borderRadius != null
         ? RRect.fromRectAndCorners(
             Offset.zero & size,
@@ -192,6 +221,7 @@ class _WavyProgressPainter extends CustomPainter {
     if (value == null) {
       _paintIndeterminate(canvas, size);
       if (clipRRect != null) canvas.restore();
+      canvas.restore();
       return;
     }
 
@@ -205,13 +235,15 @@ class _WavyProgressPainter extends CustomPainter {
       ..color = trackColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
 
     final activePaint = Paint()
       ..color = activeColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
 
     _drawFlat(canvas, futureStart, size.width, midY, trackPaint);
 
@@ -233,11 +265,14 @@ class _WavyProgressPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(headX, dotY),
         stopRadius,
-        Paint()..color = activeColor,
+        Paint()
+          ..color = activeColor
+          ..isAntiAlias = true,
       );
     }
 
     if (clipRRect != null) canvas.restore();
+    canvas.restore();
   }
 
   void _paintIndeterminate(Canvas canvas, Size size) {
@@ -246,7 +281,8 @@ class _WavyProgressPainter extends CustomPainter {
       ..color = trackColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
 
     _drawFlat(canvas, 0, size.width, midY, trackPaint);
 
@@ -258,7 +294,8 @@ class _WavyProgressPainter extends CustomPainter {
       ..color = activeColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
 
     canvas.save();
     canvas.clipRect(Rect.fromLTRB(tail, 0, head, size.height));
@@ -268,7 +305,9 @@ class _WavyProgressPainter extends CustomPainter {
     canvas.drawCircle(
       Offset(head, _waveY(head, size.height)),
       stopRadius,
-      Paint()..color = activeColor,
+      Paint()
+        ..color = activeColor
+        ..isAntiAlias = true,
     );
   }
 
