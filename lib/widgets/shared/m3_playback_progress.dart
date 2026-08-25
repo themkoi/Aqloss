@@ -1,6 +1,10 @@
-import 'dart:math' as math;
+import 'dart:ui' as ui;
 
+import 'package:aqloss/ui/m3/m3_pressable.dart';
+import 'package:aqloss/widgets/shared/m3_wave_paint.dart';
+import 'package:aqloss/widgets/shared/m3_wave_shaders.dart';
 import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
 
 String m3FormatDuration(Duration d) {
   final h = d.inHours;
@@ -10,101 +14,100 @@ String m3FormatDuration(Duration d) {
   return '$m:$s';
 }
 
-// M3 playback progress
-class M3WavyLinearProgress extends StatefulWidget {
-  final double? value;
-  final Color? color;
-  final Color? backgroundColor;
-  final double height;
-  final double strokeWidth;
-  final double wavelength;
-  final double amplitude;
-  final double gapSize;
-  final double stopRadius;
-  final bool playing;
-  final BorderRadius? borderRadius;
+Widget m3eScope(
+  BuildContext context,
+  Widget child, {
+  Color? seed,
+  bool compact = false,
+}) {
+  final theme = Theme.of(context);
+  final color = seed ?? theme.colorScheme.primary;
+  M3WavePrograms.ensure();
+  final base = theme.brightness == Brightness.dark
+      ? M3EThemeData.dark(seedColor: color)
+      : M3EThemeData.light(seedColor: color);
+  return M3ETheme(
+    data: base.copyWith(
+      sliderTheme: M3ESliderTheme.defaults.copyWith(
+        height: compact ? 32 : 40,
+        trackHeight: compact ? 3.5 : 4,
+        handleHeight: compact ? 14 : 18,
+        handleWidth: 3,
+        pressedHandleWidth: 2,
+        handleGap: 3,
+        trackCornerRadius: 2,
+        stopIndicatorSize: 3,
+        waveAmplitude: compact ? 2.6 : 3.4,
+        wavelength: compact ? 56 : 64,
+      ),
+    ),
+    child: child,
+  );
+}
 
-  const M3WavyLinearProgress({
+class M3PlaybackRing extends StatefulWidget {
+  final double? progress;
+  final double size;
+  final double strokeWidth;
+  final Color? color;
+  final Color? trackColor;
+  final bool loading;
+  final bool wavy;
+  final Widget child;
+
+  const M3PlaybackRing({
     super.key,
-    this.value,
+    this.progress,
+    required this.child,
+    this.size = 72,
+    this.strokeWidth = 6,
     this.color,
-    this.backgroundColor,
-    this.height = 8,
-    this.strokeWidth = 4,
-    this.wavelength = 24,
-    this.amplitude = 0.85,
-    this.gapSize = 4,
-    this.stopRadius = 3,
-    this.playing = false,
-    this.borderRadius,
+    this.trackColor,
+    this.loading = false,
+    this.wavy = true,
   });
 
   @override
-  State<M3WavyLinearProgress> createState() => _M3WavyLinearProgressState();
+  State<M3PlaybackRing> createState() => _M3PlaybackRingState();
 }
 
 class _M3WavyLinearProgressState extends State<M3WavyLinearProgress>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _phaseCtrl;
-  late final AnimationController _valueCtrl;
-  late Animation<double> _valueAnim;
 
   @override
   void initState() {
     super.initState();
-    _phaseCtrl = AnimationController(
+    _wave = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
+      duration: const Duration(milliseconds: 3200),
     );
-    _valueCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
-
-    final initialVal = widget.value ?? 0.0;
-    _valueAnim = AlwaysStoppedAnimation(initialVal);
-
     _syncAnimation();
   }
 
   @override
-  void didUpdateWidget(M3WavyLinearProgress oldWidget) {
+  void didUpdateWidget(M3PlaybackRing oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.playing != widget.playing) {
+    if (oldWidget.playing != widget.playing ||
+        oldWidget.value != widget.value) {
       _syncAnimation();
-    }
-
-    if (widget.value != oldWidget.value && widget.value != null) {
-      final begin = _valueAnim.value;
-      final end = widget.value!.clamp(0.0, 1.0);
-
-      final isSeek = (end - begin).abs() > 0.05;
-
-      if (isSeek) {
-        _valueAnim = AlwaysStoppedAnimation(end);
-        _valueCtrl.value = 1.0;
-      } else {
-        _valueAnim = Tween<double>(begin: begin, end: end).animate(
-          CurvedAnimation(parent: _valueCtrl, curve: Curves.linear),
-        );
-        _valueCtrl.forward(from: 0.0);
-      }
     }
   }
 
-  void _syncAnimation() {
-    if (widget.playing && widget.value != null) {
-      _phaseCtrl.repeat();
-    } else {
-      _phaseCtrl.stop();
-      _phaseCtrl.value = 0;
+  void _syncWave() {
+    final run = widget.loading || widget.wavy;
+    if (run && !_wave.isAnimating) {
+      _wave.repeat();
+    } else if (!run && _wave.isAnimating) {
+      _wave
+        ..stop()
+        ..value = 0;
     }
   }
 
   @override
   void dispose() {
     _phaseCtrl.dispose();
-    _valueCtrl.dispose();
     super.dispose();
   }
 
@@ -120,11 +123,11 @@ class _M3WavyLinearProgressState extends State<M3WavyLinearProgress>
         cs.surfaceContainerHighest;
 
     return AnimatedBuilder(
-      animation: Listenable.merge([_phaseCtrl, _valueCtrl]),
+      animation: _phaseCtrl,
       builder: (context, _) {
         return CustomPaint(
           painter: _WavyProgressPainter(
-            value: widget.value == null ? null : _valueAnim.value,
+            value: widget.value,
             phase: _phaseCtrl.value * math.pi * 2,
             playing: widget.playing,
             activeColor: active,
@@ -180,7 +183,7 @@ class _WavyProgressPainter extends CustomPainter {
 
   Path _wavePath(double width, double height) {
     final path = Path();
-    const step = 1.0;
+    const step = 2.0;
     path.moveTo(0, _waveY(0, height));
     for (var x = step; x <= width; x += step) {
       path.lineTo(x, _waveY(x, height));
@@ -201,8 +204,6 @@ class _WavyProgressPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.saveLayer(Offset.zero & size, Paint());
-
     final clipRRect = borderRadius != null
         ? RRect.fromRectAndCorners(
             Offset.zero & size,
@@ -221,7 +222,6 @@ class _WavyProgressPainter extends CustomPainter {
     if (value == null) {
       _paintIndeterminate(canvas, size);
       if (clipRRect != null) canvas.restore();
-      canvas.restore();
       return;
     }
 
@@ -235,15 +235,13 @@ class _WavyProgressPainter extends CustomPainter {
       ..color = trackColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round
-      ..isAntiAlias = true;
+      ..strokeCap = StrokeCap.round;
 
     final activePaint = Paint()
       ..color = activeColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round
-      ..isAntiAlias = true;
+      ..strokeCap = StrokeCap.round;
 
     _drawFlat(canvas, futureStart, size.width, midY, trackPaint);
 
@@ -265,14 +263,11 @@ class _WavyProgressPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(headX, dotY),
         stopRadius,
-        Paint()
-          ..color = activeColor
-          ..isAntiAlias = true,
+        Paint()..color = activeColor,
       );
     }
 
     if (clipRRect != null) canvas.restore();
-    canvas.restore();
   }
 
   void _paintIndeterminate(Canvas canvas, Size size) {
@@ -281,8 +276,7 @@ class _WavyProgressPainter extends CustomPainter {
       ..color = trackColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round
-      ..isAntiAlias = true;
+      ..strokeCap = StrokeCap.round;
 
     _drawFlat(canvas, 0, size.width, midY, trackPaint);
 
@@ -294,8 +288,7 @@ class _WavyProgressPainter extends CustomPainter {
       ..color = activeColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round
-      ..isAntiAlias = true;
+      ..strokeCap = StrokeCap.round;
 
     canvas.save();
     canvas.clipRect(Rect.fromLTRB(tail, 0, head, size.height));
@@ -305,9 +298,7 @@ class _WavyProgressPainter extends CustomPainter {
     canvas.drawCircle(
       Offset(head, _waveY(head, size.height)),
       stopRadius,
-      Paint()
-        ..color = activeColor
-        ..isAntiAlias = true,
+      Paint()..color = activeColor,
     );
   }
 
@@ -352,19 +343,52 @@ class M3PlaybackRing extends StatelessWidget {
         theme.colorScheme.surfaceContainerHighest;
 
     return SizedBox(
-      width: size,
-      height: size,
+      width: widget.size,
+      height: widget.size,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          CircularProgressIndicator(
-            value: loading ? null : progress?.clamp(0.0, 1.0),
-            strokeWidth: strokeWidth,
-            strokeCap: StrokeCap.round,
-            color: active,
-            backgroundColor: track,
+          AnimatedBuilder(
+            animation: _wave,
+            builder: (context, _) {
+              final phase = _wave.value * 6.283185307179586;
+              return CustomPaint(
+                size: Size.square(widget.size),
+                painter: shader != null
+                    ? M3ShaderRingPainter(
+                        shader: shader,
+                        progress: widget.loading
+                            ? 0
+                            : (widget.progress ?? 0).clamp(0.0, 1.0),
+                        phase: phase,
+                        amp: wavy ? 3.4 : 0,
+                        wavelength: 28,
+                        strokeWidth: widget.strokeWidth,
+                        trackStrokeWidth: widget.strokeWidth * 0.62,
+                        loading: widget.loading,
+                        active: active,
+                        track: track,
+                        dpr: dpr,
+                      )
+                    : M3SmoothRingPainter(
+                        progress: widget.loading
+                            ? null
+                            : widget.progress?.clamp(0.0, 1.0),
+                        wavy: wavy,
+                        loading: widget.loading,
+                        phase: phase,
+                        active: active,
+                        track: track,
+                        strokeWidth: widget.strokeWidth,
+                        trackStrokeWidth: widget.strokeWidth * 0.62,
+                        maxAmplitude: 3.4,
+                        wavelength: 28,
+                        devicePixelRatio: dpr,
+                      ),
+              );
+            },
           ),
-          child,
+          widget.child,
         ],
       ),
     );
@@ -398,72 +422,55 @@ class M3SeekBar extends StatefulWidget {
 }
 
 class _M3SeekBarState extends State<M3SeekBar> {
-  double? _dragValue;
+  double? _local;
 
-  double get _display => (_dragValue ?? widget.progress).clamp(0.0, 1.0);
-
-  void _update(double dx, double width, {bool end = false}) {
-    if (!widget.enabled || width <= 0) return;
-    final v = (dx / width).clamp(0.0, 1.0);
-    setState(() => _dragValue = v);
-    if (end) {
-      widget.onChangeEnd?.call(v);
-      setState(() => _dragValue = null);
-    } else {
-      widget.onChanged?.call(v);
+  @override
+  void didUpdateWidget(M3SeekBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_local != null && (widget.progress - _local!).abs() < 0.004) {
+      _local = null;
     }
+  }
+
+  void _preview(double v) {
+    setState(() => _local = v);
+    widget.onChanged?.call(v);
+  }
+
+  void _commit(double v) {
+    setState(() => _local = v);
+    widget.onChangeEnd?.call(v);
+    M3EHaptics.trigger(M3EHapticFeedback.light);
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final v = (_local ?? widget.progress).clamp(0.0, 1.0);
+    final position = _local != null && widget.duration.inMilliseconds > 0
+        ? widget.duration * _local!
+        : widget.position;
+    final canSeek = widget.enabled && widget.onChanged != null;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: widget.enabled
-                  ? (d) => _update(d.localPosition.dx, width)
-                  : null,
-              onTapUp: widget.enabled
-                  ? (d) => _update(d.localPosition.dx, width, end: true)
-                  : null,
-              onHorizontalDragUpdate: widget.enabled
-                  ? (d) => _update(d.localPosition.dx, width)
-                  : null,
-              onHorizontalDragEnd: widget.enabled
-                  ? (_) {
-                      if (_dragValue != null) {
-                        widget.onChangeEnd?.call(_dragValue!);
-                      }
-                      setState(() => _dragValue = null);
-                    }
-                  : null,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: M3WavyLinearProgress(
-                  value: _display,
-                  color: widget.activeColor ?? cs.primary,
-                  height: 8,
-                  strokeWidth: 4,
-                  playing: widget.playing && _dragValue == null,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            );
-          },
+        _M3WaveSlider(
+          value: v,
+          playing: widget.playing,
+          enabled: canSeek,
+          compact: false,
+          activeColor: widget.activeColor,
+          onChanged: canSeek ? _preview : null,
+          onChangeEnd: canSeek ? _commit : null,
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                m3FormatDuration(widget.position),
+                m3FormatDuration(position),
                 style: Theme.of(
                   context,
                 ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
@@ -505,71 +512,238 @@ class M3MiniPlaybackProgress extends StatefulWidget {
 }
 
 class _M3MiniPlaybackProgressState extends State<M3MiniPlaybackProgress> {
-  double? _dragValue;
+  double? _local;
 
-  double get _display => (_dragValue ?? widget.progress).clamp(0.0, 1.0);
-
-  void _update(double dx, double width, {bool end = false}) {
-    if (width <= 0) return;
-    final v = (dx / width).clamp(0.0, 1.0);
-    setState(() => _dragValue = v);
-    if (end) {
-      widget.onChangeEnd?.call(v);
-      setState(() => _dragValue = null);
-    } else {
-      widget.onChanged?.call(v);
+  @override
+  void didUpdateWidget(M3MiniPlaybackProgress oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_local != null && (widget.progress - _local!).abs() < 0.004) {
+      _local = null;
     }
+  }
+
+  void _preview(double v) {
+    setState(() => _local = v);
+    widget.onChanged?.call(v);
+  }
+
+  void _commit(double v) {
+    setState(() => _local = v);
+    widget.onChangeEnd?.call(v);
+    M3EHaptics.trigger(M3EHapticFeedback.light);
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final v = (_local ?? widget.progress).clamp(0.0, 1.0);
+    final position = _local != null && widget.duration.inMilliseconds > 0
+        ? widget.duration * _local!
+        : widget.position;
+    final timeStyle = TextStyle(fontSize: 10, color: cs.onSurfaceVariant);
 
     return Row(
       children: [
-        Text(
-          m3FormatDuration(widget.position),
-          style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (d) => _update(d.localPosition.dx, width),
-                onTapUp: (d) => _update(d.localPosition.dx, width, end: true),
-                onHorizontalDragUpdate: (d) =>
-                    _update(d.localPosition.dx, width),
-                onHorizontalDragEnd: (_) {
-                  if (_dragValue != null) widget.onChangeEnd?.call(_dragValue!);
-                  setState(() => _dragValue = null);
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: M3WavyLinearProgress(
-                    value: _display,
-                    height: 6,
-                    strokeWidth: 3,
-                    wavelength: 18,
-                    playing: widget.playing && _dragValue == null,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              );
-            },
+        SizedBox(
+          width: 38,
+          child: Text(
+            m3FormatDuration(position),
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            style: timeStyle,
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          m3FormatDuration(widget.duration),
-          style: TextStyle(
-            fontSize: 10,
-            color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: ClipRect(
+              child: _M3WaveSlider(
+                value: v,
+                playing: widget.playing,
+                enabled: widget.onChanged != null,
+                compact: true,
+                onChanged: widget.onChanged == null ? null : _preview,
+                onChangeEnd: widget.onChanged == null ? null : _commit,
+              ),
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 38,
+          child: Text(
+            m3FormatDuration(widget.duration),
+            maxLines: 1,
+            style: timeStyle.copyWith(
+              color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _M3WaveSlider extends StatefulWidget {
+  final double value;
+  final bool playing;
+  final bool enabled;
+  final bool compact;
+  final Color? activeColor;
+  final ValueChanged<double>? onChanged;
+  final ValueChanged<double>? onChangeEnd;
+
+  const _M3WaveSlider({
+    required this.value,
+    required this.playing,
+    required this.enabled,
+    required this.compact,
+    this.activeColor,
+    this.onChanged,
+    this.onChangeEnd,
+  });
+
+  @override
+  State<_M3WaveSlider> createState() => _M3WaveSliderState();
+}
+
+class _M3WaveSliderState extends State<_M3WaveSlider>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _wave;
+  ui.FragmentShader? _shader;
+  double _width = 1;
+  double _value = 0;
+  bool _dragging = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _value = widget.value;
+    _wave = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3200),
+    );
+    _syncWave();
+    M3WavePrograms.ensure().then((_) {
+      final program = M3WavePrograms.track;
+      if (!mounted || program == null) return;
+      setState(() => _shader = program.fragmentShader());
+    });
+  }
+
+  @override
+  void didUpdateWidget(_M3WaveSlider oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_dragging) _value = widget.value;
+    _syncWave();
+  }
+
+  void _syncWave() {
+    if (widget.playing && !_wave.isAnimating) {
+      _wave.repeat();
+    } else if (!widget.playing && _wave.isAnimating) {
+      _wave
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _shader?.dispose();
+    _wave.dispose();
+    super.dispose();
+  }
+
+  double _at(Offset local) => (local.dx / _width).clamp(0.0, 1.0);
+
+  void _preview(double v) {
+    _value = v;
+    widget.onChanged?.call(v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final active = widget.activeColor ?? cs.primary;
+    final inactive = cs.secondaryContainer;
+    final height = widget.compact ? 32.0 : 40.0;
+    final wavelength = widget.compact ? 56.0 : 64.0;
+    final amp = widget.playing ? (widget.compact ? 2.6 : 3.4) : 0.0;
+    final step = m3WaveStep(context, wavelength: wavelength);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final shader = _shader;
+    final trackHeight = widget.compact ? 3.5 : 4.0;
+    final handleHeight = widget.compact ? 14.0 : 18.0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _width = constraints.maxWidth;
+        return AnimatedBuilder(
+          animation: _wave,
+          builder: (context, _) {
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: !widget.enabled
+                  ? null
+                  : (d) {
+                      final v = _at(d.localPosition);
+                      _preview(v);
+                      widget.onChangeEnd?.call(v);
+                    },
+              onHorizontalDragStart: !widget.enabled
+                  ? null
+                  : (d) {
+                      _dragging = true;
+                      _preview(_at(d.localPosition));
+                    },
+              onHorizontalDragUpdate: !widget.enabled
+                  ? null
+                  : (d) => _preview(_at(d.localPosition)),
+              onHorizontalDragEnd: !widget.enabled
+                  ? null
+                  : (_) {
+                      _dragging = false;
+                      widget.onChangeEnd?.call(_value);
+                    },
+              child: SizedBox(
+                height: height,
+                width: double.infinity,
+                child: CustomPaint(
+                  painter: shader != null
+                      ? M3ShaderSeekPainter(
+                          shader: shader,
+                          value: _dragging ? _value : widget.value,
+                          phase: _wave.value * 6.283185307179586,
+                          amp: amp,
+                          wavelength: wavelength,
+                          trackHeight: trackHeight,
+                          handleHeight: handleHeight,
+                          handleWidth: 3,
+                          handleGap: 3,
+                          active: active,
+                          inactive: inactive,
+                          dpr: dpr,
+                        )
+                      : M3SmoothSeekPainter(
+                          value: _dragging ? _value : widget.value,
+                          wavy: widget.playing,
+                          phase: _wave.value * 6.283185307179586,
+                          active: active,
+                          inactive: inactive,
+                          trackHeight: trackHeight,
+                          handleHeight: handleHeight,
+                          handleWidth: 3,
+                          handleGap: 3,
+                          waveAmplitude: amp,
+                          wavelength: wavelength,
+                          sampleStep: step,
+                        ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -589,7 +763,7 @@ class M3PlayButton extends StatelessWidget {
     required this.isLoading,
     required this.hasTrack,
     required this.progress,
-    this.size = 58,
+    this.size = 52,
     this.accentColor,
     this.onTap,
   });
@@ -598,53 +772,90 @@ class M3PlayButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final accent = accentColor ?? cs.primary;
-    final onAccent = accentColor != null ? Colors.white : cs.onPrimary;
+    final muted = cs.onSurface.withValues(alpha: 0.28);
+    final ringSize = size + 22;
+    final iconColor = hasTrack ? accent : muted;
+    final iconSize = size >= 56
+        ? 34.0
+        : size >= 48
+        ? 28.0
+        : 22.0;
 
-    final core = Material(
-      color: !hasTrack ? cs.onSurface.withValues(alpha: 0.08) : accent,
-      shape: const CircleBorder(),
-      elevation: hasTrack ? 2 : 0,
-      shadowColor: accent.withValues(alpha: 0.35),
-      child: InkWell(
-        onTap: isLoading ? null : onTap,
-        customBorder: const CircleBorder(),
-        child: SizedBox(
-          width: size,
-          height: size,
-          child: isLoading && !hasTrack
-              ? Center(
-                  child: SizedBox(
-                    width: size * 0.42,
-                    height: size * 0.42,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      strokeCap: StrokeCap.round,
-                      year2023: false,
-                      color: cs.primary,
-                      backgroundColor: cs.surfaceContainerHighest,
-                    ),
-                  ),
-                )
-              : Icon(
-                  isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  color: hasTrack
-                      ? onAccent
-                      : cs.onSurface.withValues(alpha: 0.25),
-                  size: size * 0.48,
-                ),
-        ),
+    final icon = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: Icon(
+        isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        key: ValueKey(isPlaying),
+        color: iconColor,
+        size: iconSize,
       ),
     );
 
-    if (!hasTrack) return core;
+    final core = (!hasTrack && !isLoading)
+        ? SizedBox(
+            width: size,
+            height: size,
+            child: Center(child: icon),
+          )
+        : M3PlaybackRing(
+            progress: isLoading ? null : progress,
+            loading: isLoading,
+            wavy: isPlaying,
+            size: ringSize,
+            strokeWidth: size >= 56 ? 6.5 : 5.5,
+            color: accent,
+            child: icon,
+          );
 
-    return M3PlaybackRing(
-      progress: isLoading ? null : progress,
-      loading: isLoading,
-      size: size + 12,
-      strokeWidth: 3.5,
-      color: accent,
-      child: core,
+    return m3eScope(
+      context,
+      M3Pressable(
+        onTap: isLoading ? null : onTap,
+        enabled: hasTrack && !isLoading,
+        ink: false,
+        semanticLabel: isPlaying ? 'Pause' : 'Play',
+        child: core,
+      ),
+      seed: accent,
+    );
+  }
+}
+
+class M3TransportIcon extends StatelessWidget {
+  final IconData icon;
+  final IconData? selectedIcon;
+  final bool selected;
+  final String? tooltip;
+  final VoidCallback? onPressed;
+  final M3EIconButtonSize size;
+
+  const M3TransportIcon({
+    super.key,
+    required this.icon,
+    this.selectedIcon,
+    this.selected = false,
+    this.tooltip,
+    this.onPressed,
+    this.size = M3EIconButtonSize.sm,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return m3eScope(
+      context,
+      M3EIconButton(
+        icon: Icon(icon),
+        selectedIcon: selectedIcon != null ? Icon(selectedIcon) : null,
+        isSelected: selectedIcon != null ? selected : null,
+        onPressed: onPressed,
+        tooltip: tooltip,
+        variant: M3EIconButtonVariant.standard,
+        size: size,
+        haptic: M3EHapticFeedback.light,
+        enableFeedback: true,
+      ),
     );
   }
 }
