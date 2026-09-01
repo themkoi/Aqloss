@@ -100,7 +100,7 @@ class MediaControlService {
       final loopStatus = switch (state.loopMode) {
         LoopMode.off => 'None',
         LoopMode.track => 'Track',
-        LoopMode.album => 'Playlist',
+        LoopMode.album => 'Playlist', // mpris has no standard album loop mode so map is to playlist
         LoopMode.playlist => 'Playlist',
       };
 
